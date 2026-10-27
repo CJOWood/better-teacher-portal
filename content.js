@@ -322,7 +322,7 @@ function runBookmarklet() {
    * 1. Moves Class Code closer to names
    * 2. Moves Class Attendance directly beside names
    * 3. Formats names nicely
-    * 4. Adds custom colorful badges for "A" (Absent) and "L" (Late)
+    * 4. Adds custom colorful badges for "A" (Absent), "L" (Late), and "A-E" (Absent Excused)
     */
   let codeTries = 0;
   const CODE_MAX = 25;
@@ -505,9 +505,13 @@ function runBookmarklet() {
               
               newOrder.splice(newToIdx, 0, item);
 
-              chrome.storage.sync.set({ [ATTENDANCE_ORDER_KEY]: newOrder }, () => {
-                applyOrderAndStyles(newOrder);
-              });
+              if (isContextValid()) {
+                chrome.storage.sync.set({ [ATTENDANCE_ORDER_KEY]: newOrder }, () => {
+                  if (isContextValid()) {
+                    applyOrderAndStyles(newOrder);
+                  }
+                });
+              }
             };
           });
         } else {
@@ -539,7 +543,12 @@ function runBookmarklet() {
                 const classAttIdx = rowHeaders.indexOf('Class Attendance');
                 if (classAttIdx !== -1) {
                   const classAttCell = row.cells[classAttIdx];
-                  if (classAttCell && classAttCell.textContent.includes('A-E')) {
+                  const isExcused = classAttCell && (
+                    classAttCell.textContent.includes('A-E') ||
+                    Boolean(classAttCell.querySelector('.btp-badge[data-raw-text="A-E"]')) ||
+                    (classAttCell.querySelector('.btp-badge') && classAttCell.querySelector('.btp-badge').textContent.trim() === 'E')
+                  );
+                  if (isExcused) {
                     const buttons = cell.querySelectorAll('button, input[type="button"], input[type="submit"], a');
                     buttons.forEach(btn => {
                       const btnText = (btn.textContent || btn.value || '').trim().toUpperCase();
@@ -560,13 +569,24 @@ function runBookmarklet() {
             }
 
             // Attendance Badges (Class & Daily)
-            if (headerName === 'Class Attendance' || headerName === 'Daily Attendance') {
+            const isClassAtt = headerName === 'Class Attendance';
+            const isDailyAtt = headerName === 'Daily Attendance';
+            if (isClassAtt || isDailyAtt) {
               const input = cell.querySelector('input[type="text"]');
               if (input) {
                 const applyInputBadge = (val) => {
-                  if (val === 'L' || val === 'A') {
-                    input.style.backgroundColor = val === 'L' ? '#ffd866' : '#ff6188';
-                    input.style.color = val === 'L' ? '#d25a00' : '#7c1a3b';
+                  const isExcused = isClassAtt && (val === 'A-E' || val === 'E');
+                  if (val === 'L' || val === 'A' || isExcused) {
+                    if (val === 'L') {
+                      input.style.backgroundColor = '#ffd866';
+                      input.style.color = '#d25a00';
+                    } else if (val === 'A') {
+                      input.style.backgroundColor = '#ff6188';
+                      input.style.color = '#7c1a3b';
+                    } else {
+                      input.style.backgroundColor = '#fc9867';
+                      input.style.color = '#782a06';
+                    }
                     input.style.fontWeight = 'bold';
                     input.style.textAlign = 'center';
                     input.style.borderRadius = '4px';
@@ -583,7 +603,7 @@ function runBookmarklet() {
               } else {
                 // Clear existing badges to prevent "widening" / nesting
                 cell.querySelectorAll('.btp-badge').forEach(b => {
-                  const text = b.textContent;
+                  const text = b.dataset.rawText || b.textContent;
                   b.parentNode.replaceChild(document.createTextNode(text), b);
                 });
 
@@ -592,20 +612,39 @@ function runBookmarklet() {
                 let textNode;
                 while ((textNode = walker.nextNode())) {
                   const val = textNode.nodeValue.trim().toUpperCase();
-                  if (val === 'L' || val === 'A') nodesToReplace.push({ node: textNode, val });
+                  const isExcused = isClassAtt && (val === 'A-E' || val === 'E');
+                  if (val === 'L' || val === 'A' || isExcused) nodesToReplace.push({ node: textNode, val });
                 }
                 nodesToReplace.forEach(({ node, val }) => {
-                  const badgeColor = val === 'L' ? '#ffd866' : '#ff6188';
-                  const textColor = val === 'L' ? '#d25a00' : '#7c1a3b';
+                  let badgeColor, textColor, badgeText, badgeTitle;
+                  if (val === 'L') {
+                    badgeColor = '#ffd866';
+                    textColor = '#d25a00';
+                    badgeText = 'L';
+                    badgeTitle = 'Late (L)';
+                  } else if (val === 'A') {
+                    badgeColor = '#ff6188';
+                    textColor = '#7c1a3b';
+                    badgeText = 'A';
+                    badgeTitle = 'Absent (A)';
+                  } else {
+                    badgeColor = '#fc9867';
+                    textColor = '#782a06';
+                    badgeText = 'E';
+                    badgeTitle = 'Absent Excused (A-E)';
+                  }
+
                   const span = document.createElement('span');
                   span.className = 'btp-badge';
+                  span.dataset.rawText = val;
+                  span.title = badgeTitle;
                   Object.assign(span.style, {
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     width: '22px', height: '22px', borderRadius: '4px',
                     backgroundColor: badgeColor, color: textColor,
                     fontWeight: 'bold', fontSize: '12px', marginRight: '4px'
                   });
-                  span.textContent = val;
+                  span.textContent = badgeText;
                   node.parentNode.replaceChild(span, node);
                 });
               }
@@ -1665,7 +1704,9 @@ function showFirstRunOverlay() {
     overlay.style.opacity = '0';
     modal.style.transform = 'translateY(20px)';
     setTimeout(() => overlay.remove(), 400);
-    chrome.storage.sync.set({ firstRun: false });
+    if (isContextValid()) {
+      chrome.storage.sync.set({ firstRun: false });
+    }
   };
 }
 
